@@ -1,0 +1,240 @@
+---
+import Base from "../../layouts/Base.astro";
+---
+
+<Base
+  title="스파르타 물류 — 인증 경계를 Gateway 한 곳으로 모으기 | 김다은"
+  description="10개 서비스 MSA에서 API Gateway, User 서비스, 공통 인증 모듈, 컨테이너 인프라를 담당하며 헤더 위조와 가입 동시성을 막았습니다."
+>
+  <div class="wrap">
+    <a class="back" href="/">포트폴리오로 돌아가기</a>
+  </div>
+
+  <section class="wrap detail-hero">
+    <h1>인증 경계를 Gateway 한 곳으로 모으기</h1>
+    <p class="detail-hero__sub">
+      스파르타 물류 관리 플랫폼 · 전국 17개 허브를 거치는 B2B 배송 시스템
+    </p>
+  </section>
+
+  <section class="wrap summary">
+    <ul class="rows">
+      <li><dfn>기간</dfn><span>2026.05 – 2026.06</span></li>
+      <li><dfn>팀</dfn><span>6명</span></li>
+      <li>
+        <dfn>내 역할</dfn>
+        <span
+          >API Gateway · User 서비스 · 공통 인증 모듈 · 컨테이너 인프라</span
+        >
+      </li>
+      <li>
+        <dfn>시스템</dfn>
+        <span
+          >7개 도메인 서비스와 Gateway, Eureka, Config Server까지 10개 서비스.
+          동기 호출은 OpenFeign, 비동기 이벤트는 Kafka</span
+        >
+      </li>
+      <li>
+        <dfn>링크</dfn>
+        <span>
+          <a href="https://github.com/swissmissed2/sparta-logistics">GitHub</a> ·
+          <a
+            href="https://github.com/swissmissed2/sparta-logistics/tree/dev/docs/auth"
+            >인증/인가 문서</a
+          >
+        </span>
+      </li>
+    </ul>
+  </section>
+
+  <div class="wrap prose">
+    <h2>어떤 서비스인가</h2>
+    <p class="lede">
+      네 종류의 사용자가 한 시스템을 같이 씁니다. 마스터는 전체를, 허브 관리자와
+      배송 담당자는 소속 허브만, 업체 담당자는 소속 업체만 다룹니다. 누가 무엇을
+      볼 수 있느냐가 제품의 핵심 규칙이었고, 그 판단의 입력값을 만드는 인증
+      계층이 제 담당이었습니다.
+    </p>
+
+    <h2>생각했던 위험과 막은 방법</h2>
+
+    <h3>마스터가 두 명 생길 수 있는 구멍</h3>
+    <p>
+      <strong>문제.</strong> 최초 가입자를 자동으로 마스터로 승격시키는
+      요구사항이 있었고, 처음 구현은 "사용자가 한 명도 없으면 마스터로" 한
+      줄이었습니다. 요청 둘이 동시에 들어오면 둘 다 "없음"을 읽고 마스터가 두 명
+      생깁니다. 마스터는 전 시스템의 모든 자원에 접근할 수 있으므로 이건 데이터
+      오류가 아니라 권한 사고입니다.
+    </p>
+    <p>후보를 네 개 놓고 비교했습니다.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>방식</th><th>왜 안 됐나</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>synchronized</code></td>
+            <td>단일 인스턴스에서만 유효. 서버를 늘리면 무력화</td>
+          </tr>
+          <tr>
+            <td>UNIQUE 제약</td>
+            <td>
+              요구사항은 "마스터는 1명"이 아니라 "최초 1명만 마스터"라 제약으로
+              표현할 수 없음
+            </td>
+          </tr>
+          <tr>
+            <td>비관적 락</td>
+            <td>잠글 대상 행이 아직 없음. 첫 가입자이므로</td>
+          </tr>
+          <tr>
+            <td><strong>PostgreSQL Advisory Lock</strong></td>
+            <td>
+              <strong
+                >행이 없어도 임의 키로 잠글 수 있고 다중 인스턴스에서도 유효</strong
+              > — 채택
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      <strong>해결.</strong> Advisory Lock으로 가입 트랜잭션을 줄 세웠습니다.
+      트랜잭션이 끝나면 자동으로 풀리는 종류를 골랐는데, 명시적 해제가 필요한 쪽은
+      예외가 나면 락이 남아
+      <strong>그 다음부터 모든 가입이 막히기 때문</strong>입니다.
+    </p>
+    <p>
+      마스터 승격 시 요청에 담겨 온 허브·업체 정보는 강제로 비웁니다. 마스터는
+      특정 허브에 속할 수 없는데 그대로 두면 "전체 권한인데 특정 허브 소속"이라는
+      모순 상태가 저장됩니다. 이 값은 그대로 헤더로 나가 하위 서비스의 접근 범위
+      판단에 쓰이므로, 잘못된 조합이 하나 저장되면
+      <strong>인가 판단 전체가 오염됩니다.</strong> 그래서 권한별 소속 제약을
+      엔티티 불변식으로 두고 생성과 수정 양쪽에서 검증합니다.
+    </p>
+
+    <h3>Gateway를 믿는다는 선택이 만드는 새 구멍</h3>
+    <p>
+      <strong>문제.</strong> 내부 서비스가 각자 토큰을 검증하면 시크릿 키를 여덟
+      서비스가 공유하고 검증 로직도 흩어집니다. 그렇다고 Gateway에서 한 번만
+      검증한 뒤 헤더로 신원을 전달하면,
+      <strong>클라이언트가 그 헤더를 직접 위조해 보내면 그대로 신뢰되는</strong>
+      더 심각한 구멍이 생깁니다. 편의를 위한 신뢰 모델이 그대로 공격면이 되는
+      구조입니다.
+    </p>
+    <p>
+      <strong>해결.</strong> Gateway에서 한 번만 검증하되, 모든 라우팅보다 먼저
+      실행되는 필터에서
+      <strong>진입 즉시 신뢰 경계를 다시 세웁니다.</strong>
+    </p>
+    <ol>
+      <li>
+        요청에 들어있는 내부 호출 표시 헤더를 <strong>제거</strong>합니다. 외부에서
+        이걸 보내면 내부 서비스가 시스템 권한을 부여해 버립니다.
+      </li>
+      <li>화이트리스트 경로면 통과시킵니다.</li>
+      <li>토큰을 추출해 검증하고, 없거나 틀리면 401을 반환합니다.</li>
+      <li>
+        사용자 신원 헤더를 <strong>제거한 뒤 다시 설정</strong>합니다. 덮어쓰기만
+        하면 중복 헤더 처리 방식에 따라 위조 값이 살아남을 수 있습니다.
+      </li>
+    </ol>
+    <p>
+      핵심은 1번과 4번입니다. 검증도 두 겹으로 두어, 내부 서비스에서도 사용자 ID의
+      형식을 다시 검증해 위조 헤더를 차단합니다.
+    </p>
+    <p>
+      토큰 오류는 두 종류로 나눕니다. 만료와 서명 불일치를 다른 코드로
+      돌려줍니다. 클라이언트가 "토큰을 갱신하면 되는 상황"과 "다시 로그인해야 하는
+      상황"을 응답만으로 구분할 수 있게 하기 위해서입니다.
+    </p>
+    <p>
+      위조 헤더 제거가 나중에 사라지지 않도록 전용 테스트로 고정했습니다. 리액티브
+      필터라 일반 MockMvc로는 검증할 수 없어 별도 테스트 도구를 썼습니다.
+    </p>
+
+    <h3>명령어 한 줄로 뜨는 개발 환경</h3>
+    <p>
+      <strong>문제.</strong> 컴포즈 파일에 의존 순서만 적었더니 "컨테이너가 떴다"만
+      보장되고 "서비스가 준비됐다"는 보장되지 않아, 애플리케이션이 설정을 못 읽고
+      죽었습니다. 팀원들이 매번 순서를 외워서 켜야 했습니다.
+    </p>
+    <p>
+      <strong>해결.</strong> DB와 Config Server, 디스커버리 서버에 헬스체크를
+      정의하고 "건강해진 뒤에" 조건으로 묶었습니다. 같은 조건을 일곱 서비스가
+      반복하므로 YAML 앵커로 한 곳에 모았습니다. 결과는 명령어 한 줄로 컨테이너
+      열다섯 개가 올바른 순서로 뜬다는 것입니다.
+    </p>
+    <p>
+      네트워크 노출도 줄였습니다. User 서비스는 호스트에 포트를 열지 않고 Gateway를
+      통해서만 접근되게 했습니다. 인증 서비스가 Gateway를 우회해 직접 호출된다면
+      헤더 검증 설계 자체가 무의미해지기 때문입니다. 또 Gateway에 경로를 매핑해 전
+      서비스 API 문서를 한 곳에서 볼 수 있게 했습니다.
+    </p>
+
+    <h2>어떤 기준으로 결정했는가</h2>
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>결정</th><th>비교 후보</th><th>선택 이유</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>액세스 토큰 15분 + 리프레시 5일</td>
+            <td>기존 5시간</td>
+            <td>로그아웃 수단이 없으니 만료 시간이 유일한 방어선</td>
+          </tr>
+          <tr>
+            <td>리프레시 불일치 시 강제 삭제</td>
+            <td>오류만 반환</td>
+            <td>탈취 시 공격자와 정상 사용자 모두 차단</td>
+          </tr>
+          <tr>
+            <td>404를 서킷 실패에서 제외</td>
+            <td>전체 예외 집계</td>
+            <td>정상적인 미존재 응답으로 서킷이 열리는 오탐 방지</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>테스트는 97개를 썼습니다. 단위 52개, 웹 계층 38개, 서비스 간 통합 7개입니다.</p>
+
+    <h2>지금 아는 한계</h2>
+    <details>
+      <summary>설계 한계와 개선 방향 <em>4건</em></summary>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>항목</th><th>현재</th><th>개선 방향</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>토큰 서명 알고리즘</td>
+              <td>대칭키. 발급과 검증이 같은 시크릿을 공유</td>
+              <td>비대칭키 전환. Gateway는 공개 키만 보유</td>
+            </tr>
+            <tr>
+              <td>서비스 간 내부 호출 인증</td>
+              <td>헤더 기반 Gateway 신뢰 모델</td>
+              <td>Gateway 우회 직접 접근은 차단 불가 → mTLS 또는 내부 API Key</td>
+            </tr>
+            <tr>
+              <td>로그아웃</td>
+              <td>미지원. 액세스 토큰 15분 만료로 대체</td>
+              <td>Redis 블랙리스트 기반 즉시 무효화</td>
+            </tr>
+            <tr>
+              <td>연쇄 삭제</td>
+              <td>개별 UPDATE 반복</td>
+              <td>벌크 UPDATE 쿼리로 전환</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
+
+    <div class="pager">
+      <a href="/projects/ditto">Ditto</a>
+      <a href="/">포트폴리오</a>
+    </div>
+  </div>
+</Base>

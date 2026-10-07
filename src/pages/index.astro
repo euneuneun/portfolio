@@ -1,0 +1,286 @@
+---
+import Base from "../layouts/Base.astro";
+---
+
+<Base
+  title="김다은 — 백엔드 개발자"
+  description="이벤트 유실, 외부 서비스 장애, 헤더 위조처럼 정상 흐름이 깨지는 지점을 먼저 정의하고 설계하는 백엔드 개발자입니다."
+>
+  <section class="wrap hero">
+    <h1>장애를 가정하고 설계하는 백엔드 개발자</h1>
+    <p class="hero__lead">
+      이벤트 유실, 외부 서비스 장애, 헤더 위조처럼 정상 흐름이 깨지는 지점을
+      먼저 찾고, 막은 결과를 테스트와 부하 측정으로 확인합니다. Spring Boot 기반
+      MSA 두 곳에서 이벤트 파이프라인과 인증 경계를 맡았습니다.
+    </p>
+    <div class="hero__cta">
+      <a class="btn btn--solid" href="/projects/ditto">프로젝트 자세히 보기</a>
+      <a class="btn btn--line" href="https://github.com/euneuneun">GitHub</a>
+    </div>
+
+    <div class="pipe">
+      <p class="pipe__caption">
+        Ditto의 알림 파이프라인은 세 단계로 나뉘고, 각 단계마다 다른 방식으로
+        실패를 막습니다.
+      </p>
+      <div class="pipe__row">
+        <div class="stage">
+          <p class="stage__name">발행</p>
+          <p class="stage__risk">
+            DB는 커밋됐는데 메시지 발행만 실패하면 이벤트가 소리 없이 사라집니다.
+          </p>
+          <span class="stage__guard">Transactional Outbox</span>
+        </div>
+        <div class="stage">
+          <p class="stage__name">소비</p>
+          <p class="stage__risk">
+            실패 한 건을 계속 재시도하면 그 뒤 메시지가 전부 막힙니다.
+          </p>
+          <span class="stage__guard">재시도 후 DLT 격리</span>
+        </div>
+        <div class="stage">
+          <p class="stage__name">전달</p>
+          <p class="stage__risk">
+            커밋 전에 보내면 롤백 뒤 클라이언트만 받은 알림이 남습니다.
+          </p>
+          <span class="stage__guard">커밋 이후 비동기 전송</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="wrap">
+    <div class="figures">
+      <div class="figure">
+        <b>2</b><small>Spring Boot 기반<br />MSA 프로젝트</small>
+      </div>
+      <div class="figure">
+        <b>496</b><small>직접 작성한 테스트<br />399 + 97</small>
+      </div>
+      <div class="figure">
+        <b>0%</b><small>11만 건 부하 테스트<br />에러율</small>
+      </div>
+      <div class="figure">
+        <b>375</b><small>피드 3종 동시 부하<br />TPS</small>
+      </div>
+    </div>
+  </section>
+
+  <section class="band band--open">
+    <div class="wrap read intro">
+      <p>
+        전자공학부에서 자료구조, 운영체제, 데이터베이스 같은 기초를 다진 뒤
+        349시간 규모의 백엔드 아키텍처 심화 과정을 수료했습니다.
+      </p>
+      <p>
+        그 과정에서 진행한 MSA 프로젝트 두 개에서 이벤트 파이프라인(Feed ·
+        Notification)과 인증 경계(API Gateway · User)를 맡았습니다. 기능을 먼저
+        만들고 예외를 나중에 붙이는 대신, 어디서 깨지는지를 먼저 정의하고
+        시작합니다.
+      </p>
+    </div>
+  </section>
+
+  <section class="band" id="projects">
+    <div class="wrap">
+      <div class="band__head">
+        <h2>프로젝트</h2>
+        <p>
+          두 프로젝트 모두 6인 팀으로 진행했고, 아래 적은 범위는 제가 전담한
+          서비스입니다. 기여 범위는 각 레포의 커밋 기록에서 확인하실 수 있습니다.
+        </p>
+      </div>
+
+      <a class="project" href="/projects/ditto">
+        <div class="project__meta">
+          <b>2026.06 – 07</b>
+          6인 팀<br />
+          7개 서비스 MSA
+        </div>
+        <div>
+          <h3 class="project__title">
+            Ditto — 알림이 유실되지 않는 이벤트 파이프라인 설계
+          </h3>
+          <p class="project__role">Feed · Notification 서비스 전담</p>
+          <p class="project__body">
+            기록을 바탕으로 사람을 추천하는 매칭 SNS입니다. 게시글 하나가 곧
+            매칭의 재료라서, 게시글 생성 이벤트가 한 건 사라지면 그 사용자는
+            추천에서 영영 빠집니다. 이벤트 유실, 파티션 블로킹, 외부 서비스
+            장애를 각각 다른 방법으로 막고 부하 측정으로 확인했습니다.
+          </p>
+          <div class="project__facts">
+            <span>테스트 399개</span>
+            <span>에러율 0%</span>
+            <span>375 TPS</span>
+            <span>시연 영상 있음</span>
+          </div>
+          <div class="project__stack">
+            <span>Java 21</span><span>Spring Boot 3</span><span>Kafka</span>
+            <span>Redis</span><span>PostgreSQL</span><span>Resilience4j</span>
+            <span>SSE</span><span>Testcontainers</span>
+          </div>
+          <span class="project__more">자세히 보기</span>
+        </div>
+      </a>
+
+      <a class="project" href="/projects/logistics">
+        <div class="project__meta">
+          <b>2026.05 – 06</b>
+          6인 팀<br />
+          10개 서비스 MSA
+        </div>
+        <div>
+          <h3 class="project__title">
+            스파르타 물류 — 인증 경계를 Gateway 한 곳으로 모으기
+          </h3>
+          <p class="project__role">
+            API Gateway · User 서비스 · 공통 인증 모듈 · 컨테이너 인프라
+          </p>
+          <p class="project__body">
+            전국 17개 허브를 거쳐 업체 간 상품을 배송하는 B2B 플랫폼입니다.
+            권한이 네 가지로 나뉘어 누가 무엇을 볼 수 있느냐가 제품의 핵심
+            규칙이었고, 그 판단의 입력값을 만드는 인증 계층을 맡았습니다. 편의를
+            위한 신뢰 모델이 그대로 공격면이 되지 않도록 설계했습니다.
+          </p>
+          <div class="project__facts">
+            <span>테스트 97개</span>
+            <span>명령어 한 줄로 컨테이너 15개 기동</span>
+          </div>
+          <div class="project__stack">
+            <span>Java 17</span><span>Spring Cloud Gateway</span>
+            <span>Spring Security</span><span>Eureka</span>
+            <span>Config Server</span><span>PostgreSQL</span><span>Redis</span>
+            <span>Docker Compose</span>
+          </div>
+          <span class="project__more">자세히 보기</span>
+        </div>
+      </a>
+    </div>
+  </section>
+
+  <section class="band" id="practice">
+    <div class="wrap">
+      <div class="band__head">
+        <h2>일하는 방식</h2>
+        <p>두 프로젝트에서 같은 순서로 일했습니다.</p>
+      </div>
+      <div class="practice">
+        <div>
+          <h3>명세를 먼저 쓴다</h3>
+          <p>
+            Ditto에서는 구현 전에 명세 문서 6종을 작성했습니다. HTTP API뿐 아니라
+            Kafka 메시지의 필드, 파티션 키, 중복 판단 기준까지 계약으로 적어,
+            서비스 여섯 개가 동시에 개발될 때 통합 시점에 계약이 어긋나는 일을
+            없앴습니다.
+          </p>
+        </div>
+        <div>
+          <h3>실패 경로를 먼저 설계한다</h3>
+          <p>
+            Outbox의 DEAD 상태, DLT 네이밍, 서킷 Fallback, 헤더 제거는 모두
+            기능보다 실패를 먼저 정의해서 나온 결정입니다. 기능을 먼저 만들면
+            어디서 깨지는지가 아니라 어떻게 더 안 깨지게 할지만 보게 됩니다.
+          </p>
+        </div>
+        <div>
+          <h3>막혔는지를 측정으로 확인한다</h3>
+          <p>
+            테스트 496개를 작성했고, 통합 테스트는 가짜 DB가 아니라
+            Testcontainers로 실제 PostgreSQL을 띄워 돌렸습니다. 설계 경계가
+            나중에 무너지는 것도 테스트로 고정해 뒀습니다.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="wrap">
+      <div class="band__head"><h2>기술 스택</h2></div>
+      <ul class="rows rows--stack">
+        <li>
+          <dfn>언어 · 프레임워크</dfn>
+          <span
+            >Java 17 / 21 · Spring Boot 3 · Spring Cloud Gateway · Spring
+            Security · JPA</span
+          >
+        </li>
+        <li>
+          <dfn>데이터 · 메시징</dfn>
+          <span>PostgreSQL · Redis · Kafka</span>
+        </li>
+        <li>
+          <dfn>인프라 · 운영</dfn>
+          <span
+            >Docker Compose · Eureka · Config Server · AWS S3 / CloudFront ·
+            Zipkin</span
+          >
+        </li>
+        <li>
+          <dfn>테스트 · 검증</dfn>
+          <span
+            >JUnit 5 · Mockito · Testcontainers · EmbeddedKafka · MockWebServer ·
+            JMeter</span
+          >
+        </li>
+      </ul>
+      <p class="note">협업은 GitHub, Notion, Slack, Postman을 씁니다.</p>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="wrap">
+      <div class="band__head"><h2>학력 · 교육</h2></div>
+      <ul class="rows">
+        <li>
+          <dfn>2026.04 – 2026.07</dfn>
+          <span
+            >스파르타 KDT 심화 · AI를 활용한 백엔드 아키텍처 심화 과정 7회차
+            수료 (349시간)</span
+          >
+        </li>
+        <li>
+          <dfn>2025.11</dfn><span>컴퓨터활용능력 1급 취득</span>
+        </li>
+        <li>
+          <dfn>2025.09</dfn><span>정보처리기사 취득</span>
+        </li>
+        <li>
+          <dfn>2020.03 – 2025.02</dfn>
+          <span
+            >전자공학부 지능IoT전공 학사. 라즈베리파이에서 YOLO 객체 탐지 모델과
+            외부 API를 연동해 실시간 탐지·알림 시스템을 만드는 캡스톤을
+            주도하면서 시스템 설계에 관심을 갖게 됐습니다.</span
+          >
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="contact" id="contact">
+    <div class="wrap">
+      <h2>연락</h2>
+      <a class="contact__mail" href="mailto:daeun2597@gmail.com"
+        >daeun2597@gmail.com</a
+      >
+      <div class="contact__links">
+        <a href="https://github.com/euneuneun">GitHub</a>
+        <a href="https://velog.io/@ddaaee">velog</a>
+        <a href="/resume.pdf">이력서 PDF</a>
+        <span style="color:var(--ink-soft)">전국 근무 가능</span>
+      </div>
+      <ul class="contact__posts">
+        <li>
+          <a href="https://velog.io/@ddaaee/Transactional-outbox-pattern"
+            >Transactional Outbox Pattern</a
+          ><em>Ditto의 이벤트 발행 구조</em>
+        </li>
+        <li>
+          <a href="https://velog.io/@ddaaee/Saga">Saga</a><em
+            >물류 프로젝트의 비동기 이벤트 구조</em
+          >
+        </li>
+      </ul>
+    </div>
+  </section>
+</Base>

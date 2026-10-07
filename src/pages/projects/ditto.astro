@@ -1,0 +1,373 @@
+---
+import Base from "../../layouts/Base.astro";
+---
+
+<Base
+  title="Ditto — 알림이 유실되지 않는 이벤트 파이프라인 설계 | 김다은"
+  description="7개 서비스 MSA에서 Feed·Notification을 전담하며 Transactional Outbox, DLT 격리, SSE 트랜잭션 분리, 서킷브레이커 Fallback을 설계했습니다."
+>
+  <div class="wrap">
+    <a class="back" href="/">포트폴리오로 돌아가기</a>
+  </div>
+
+  <section class="wrap detail-hero">
+    <h1>알림이 유실되지 않는 이벤트 파이프라인 설계</h1>
+    <p class="detail-hero__sub">
+      Ditto · 가치관과 라이프스타일 기록으로 사람을 추천하는 매칭 SNS
+    </p>
+  </section>
+
+  <section class="wrap summary">
+    <ul class="rows">
+      <li><dfn>기간</dfn><span>2026.06 – 2026.07</span></li>
+      <li><dfn>팀</dfn><span>6명</span></li>
+      <li><dfn>내 역할</dfn><span>Feed · Notification 서비스 전담</span></li>
+      <li>
+        <dfn>시스템</dfn>
+        <span
+          >7개 도메인 서비스와 API Gateway. 서비스별 독립 DB, 서비스 간 이벤트는
+          Kafka로 전달</span
+        >
+      </li>
+      <li>
+        <dfn>링크</dfn>
+        <span>
+          <a href="https://github.com/Sparta-Final-Ditto/Ditto">GitHub</a> ·
+          <a href="#">시연 영상</a>
+          <span class="open-q">영상 URL 넣기</span>
+        </span>
+      </li>
+    </ul>
+  </section>
+
+  <div class="wrap prose">
+    <h2>어떤 서비스인가</h2>
+    <p class="lede">
+      사용자가 피드에 올린 글을 임베딩해 매칭 후보를 만듭니다. 게시글 하나하나가
+      공지사항이 아니라 제품의 재료입니다. 게시글 생성 이벤트가 한 건 사라지면 그
+      사용자는 영원히 매칭 후보에서 빠집니다. 이게 제가 맡은 영역의 전제였습니다.
+    </p>
+    <p>
+      <strong>Feed</strong>는 게시글 CRUD, S3 Presigned URL 미디어 업로드, 동네명
+      조건부 노출(역지오코딩 + Redis 캐시, 위·경도는 비노출), 랜덤·팔로우·매칭
+      3종 피드의 커서 페이지네이션, 좋아요·댓글, Outbox 이벤트 발행을 담당합니다.
+      <strong>Notification</strong>은 Kafka 이벤트 소비, 알림 저장·조회·읽음 처리,
+      SSE 실시간 전달, 소비 실패 정책을 담당합니다.
+    </p>
+
+    <h2>생각했던 위험과 막은 방법</h2>
+
+    <h3>DB는 저장됐는데 이벤트만 사라지는 문제</h3>
+    <p>
+      <strong>문제.</strong> 게시글을 DB에 저장한 뒤 Kafka로 생성 이벤트를 보내는
+      구조였는데, 이 둘은 하나로 묶이지 않습니다. 커밋은 성공하고 발행만
+      실패하면, 게시글은 화면에 보이는데 임베딩·알림 서비스는 그 글의 존재를
+      영원히 모릅니다. 로그에도 남지 않습니다.
+    </p>
+    <p>
+      <strong>해결.</strong> 게시글과 이벤트 레코드를
+      <strong>같은 트랜잭션에 함께 INSERT</strong>하고, 5초마다 도는 스케줄러가
+      미발행 이벤트를 최대 100건씩 집어 Kafka로 보냅니다. 저장이 성공했다면 발행은
+      언젠가는 반드시 일어납니다.
+    </p>
+    <p>여기서 두 가지를 더 했습니다.</p>
+    <ol>
+      <li>
+        <strong>릴레이의 트랜잭션 경계를 옆으로 뺐습니다.</strong> 릴레이 메서드
+        전체를 한 트랜잭션으로 묶으면 Kafka 발행을 기다리는 동안 DB 커넥션을 계속
+        잡고 있게 됩니다. 브로커가 느려지면 그 지연이 커넥션 풀 고갈로 번집니다.
+        조회와 결과 반영만 짧은 트랜잭션으로 나누고, 발행은 트랜잭션 밖에서
+        합니다.
+      </li>
+      <li>
+        <strong>실패를 3단계로 나눠 다룹니다.</strong> 발행 실패 3회 초과 시
+        FAILED, 재시도 스케줄러가 최대 3회 다시 돌리고, 그래도 안 되면 DEAD로
+        격리해 무한 재시도를 끊고 사람이 볼 대상으로 남깁니다.
+      </li>
+    </ol>
+
+    <h3>알림 한 건 때문에 전체가 멈추는 문제</h3>
+    <p>
+      <strong>문제.</strong> Kafka 소비에 실패한 메시지를 계속 재시도하면 그
+      파티션의 뒤쪽 메시지가 전부 막힙니다. 그렇다고 건너뛰면 알림이 사라집니다.
+      둘 다 피하려면 실패의 종류를 구분해야 했습니다.
+    </p>
+    <p>
+      <strong>해결.</strong> 재시도해서 될 일만 재시도합니다. 일시적 장애는 1초
+      간격으로 3회 시도 후 DLT로 보내고, JSON 파싱 실패나 계약 검증 실패처럼 몇
+      번을 해도 같은 결과일 예외는 재시도 없이 바로 DLT로 보냅니다. 원본 토픽,
+      파티션, 오프셋과 예외 정보는 Kafka 헤더에 남겨 나중에 원인을 찾을 수 있게
+      했습니다.
+    </p>
+    <p>판단이 갈렸던 지점은 세 개입니다.</p>
+    <ul>
+      <li>
+        <strong>DLT 이름에 컨슈머 그룹을 넣었습니다.</strong> Spring 기본값은
+        <code>&lt;토픽&gt;.DLT</code>인데, 게시글 이벤트 토픽은 알림 서비스와
+        임베딩 서비스가 함께 구독합니다. 기본값을 쓰면 두 그룹의 실패 메시지가
+        같은 곳에 섞여 누가 실패했는지를 잃습니다. 그룹명을 포함시켜 격리 단위를
+        컨슈머 그룹에 맞췄습니다.
+      </li>
+      <li>
+        <strong>중복은 실패가 아닙니다.</strong> 동시에 같은 이벤트를 두 번 소비해
+        UNIQUE 제약에 걸리면 이건 "이미 처리됨"을 뜻하므로 DLT로 보내지 않고 정상
+        종료 처리합니다. 사전 조회와 DB 제약의 이중 방어를 두었습니다.
+      </li>
+      <li>
+        <strong>DLT 발행 자체가 실패하면 버립니다.</strong> 알림 한 건을 잃는 것보다
+        파티션이 막히는 게 더 나쁜 도메인이라고 판단했습니다. 결제나 정산
+        도메인이었다면 반대로 했을 겁니다.
+      </li>
+    </ul>
+
+    <h3>유령 알림과 느린 클라이언트</h3>
+    <p>
+      <strong>문제.</strong> 알림을 저장하고 SSE로 밀어주는 걸 한 흐름으로
+      처리하면 두 가지가 깨집니다. 커밋 전에 전송하면 나중에 롤백됐을 때
+      클라이언트만 받은 유령 알림이 생기고, 느린 클라이언트 하나가 Kafka 컨슈머
+      스레드를 붙잡습니다.
+    </p>
+    <p>
+      <strong>해결.</strong> DB 저장을 진실의 원천으로 두고 SSE는 보조 채널로
+      역할을 나눴습니다. 알림은 연결 여부와 무관하게 항상 먼저 DB에 저장되고,
+      실시간 전송은 커밋이 확정된 뒤에만 별도 스레드에서 실행합니다. 전송에
+      실패해도 알림은 목록 조회로 확인됩니다.
+    </p>
+    <p>
+      구현하면서 한 번 막혔던 지점이 있습니다. 같은 클래스 안에서
+      <code>@Transactional</code> 메서드를 호출하면 프록시를 거치지 않아
+      트랜잭션이 아예 걸리지 않습니다. 저장 책임을 별도 빈으로 빼고 코드 리뷰에서
+      이유를 명시해, 나중에 더 간단해 보인다고 다시 합치지 않도록 했습니다.
+    </p>
+    <p>
+      사용자당 연결을 여러 개 보관해 여러 기기에서 동시에 받을 수 있게 했고, 30초
+      heartbeat와 30분 타임아웃으로 끊긴 연결을 정리합니다.
+    </p>
+
+    <h3>남의 서비스가 죽었을 때 내 피드도 죽지 않게</h3>
+    <p>
+      <strong>문제.</strong> 팔로우·매칭 피드는 user 서비스와 match 서비스를 동기
+      호출합니다. 상대가 느려지거나 죽으면 내 피드 전체가 에러를 내고, 더 나쁜
+      건 읽기 전용 트랜잭션 안에서 외부를 호출하고 있었다는 점입니다. 남의 지연이
+      내 DB 커넥션 풀을 말립니다.
+    </p>
+    <p>
+      <strong>해결.</strong> 서킷브레이커를 올리되, 예외를 던지는 대신
+      <strong>랜덤 피드로 우회해 정상 응답을 돌려줍니다.</strong> 사용자는 빈
+      화면 대신 평범한 피드를 봅니다. 또 재시도를 서킷브레이커 안쪽에 두어, 서킷이
+      열리면 재시도 자체를 막습니다. 이미 죽은 서비스에 부하를 더 얹지 않기
+      위해서입니다.
+    </p>
+    <p>
+      두 번째로 외부 호출을 트랜잭션 밖으로 꺼냈고,
+      <strong>경계가 다시 무너지는 걸 막는 테스트를 놓았습니다.</strong> 외부 호출
+      시점에 트랜잭션이 활성 상태가 아님을 검증하는 테스트라, 나중에 누가 무심코
+      <code>@Transactional</code>을 붙이면 빌드가 깨집니다.
+    </p>
+
+    <h2>결과</h2>
+    <p>
+      피드 3종은 내부 경로가 완전히 다릅니다. 랜덤은 DB 조회만, 팔로우는 외부 호출
+      + IN절, 매칭은 외부 호출 + Redis + IN절입니다. 그래서 단독으로 기준선을 잡은
+      뒤 동시 부하로 자원 경합을 봤습니다. 측정 전에는 서킷이 닫힌 상태임을
+      확인했습니다. Fallback이 동작하면 랜덤 피드가 대신 응답해 측정이 왜곡되기
+      때문입니다.
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <th>시나리오</th>
+            <th class="num">요청</th>
+            <th class="num">에러율</th>
+            <th class="num">평균</th>
+            <th class="num">p95</th>
+            <th class="num">p99</th>
+            <th class="num">TPS</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>매칭 피드 단독 (50 threads)</td>
+            <td class="num">22,844</td>
+            <td class="num">0%</td>
+            <td class="num">9ms</td>
+            <td class="num">13ms</td>
+            <td class="num">21ms</td>
+            <td class="num">127.3</td>
+          </tr>
+          <tr>
+            <td>피드 3종 동시 (150 threads)</td>
+            <td class="num">112,547</td>
+            <td class="num">0%</td>
+            <td class="num">29ms</td>
+            <td class="num">104ms</td>
+            <td class="num">204ms</td>
+            <td class="num">375.5</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      평균 응답이 9ms에서 29ms로 나빠진 것은 예상된 자원 경합입니다. 중요한 건 전
+      구간 에러율이 0%였다는 점입니다.
+      <span class="open-q">측정 환경 한 줄 넣기</span>
+    </p>
+
+    <h2>어떻게 일했는가</h2>
+    <p>
+      코드보다 명세를 먼저 썼습니다. PRD, 요구사항, API 명세, 데이터 모델, 기술
+      문서, 테스트 케이스 6종을 구현 전에 만들었고, HTTP API뿐 아니라 Kafka
+      메시지의 필드, 파티션 키, 중복 판단 기준까지 계약으로 적었습니다. 문서가
+      서로 충돌할 때 무엇을 우선할지도 규칙으로 정해뒀습니다.
+    </p>
+    <p>
+      AI 에이전트에게 구현을 맡길 때도 같은 방식을 썼습니다. 서비스별 책임 경계,
+      계층 간 import 금지 규칙, 코딩 컨벤션을 문서로 강제해 산출물이 명세를
+      벗어나지 않게 했고, 구현 중 내린 결정은 근거와 함께 문서에 남겼습니다.
+    </p>
+    <p>
+      기여 범위는 레포의 커밋 기록에서 확인하실 수 있습니다. 테스트는 399개를
+      썼습니다. 단위 230개, 웹 계층 51개, 통합 118개이고, 통합 테스트는
+      Testcontainers로 실제 PostgreSQL을 띄우고 Kafka가 필요한 경우 EmbeddedKafka와
+      함께 돌렸습니다.
+    </p>
+
+    <h2>지금 아는 한계</h2>
+    <p>만들면서 끝내 해결하지 못한 것들입니다. 알고 남겨두었습니다.</p>
+
+    <details>
+      <summary>설계 한계와 개선 방향 <em>5건</em></summary>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>항목</th><th>현재</th><th>개선 방향</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Outbox 실패 건 감지</td>
+              <td>스케줄러가 로그 경고만 기록</td>
+              <td>Slack 알람 연동, 재처리 운영 도구</td>
+            </tr>
+            <tr>
+              <td>DLT 재처리</td>
+              <td>헤더에 근거 보존 후 수동 확인</td>
+              <td>재처리 컨슈머 또는 운영 CLI 구축</td>
+            </tr>
+            <tr>
+              <td>SSE 연결 레지스트리</td>
+              <td>인메모리 Map, 단일 인스턴스 한정</td>
+              <td>다중 인스턴스 확장 시 Redis Pub/Sub 라우팅</td>
+            </tr>
+            <tr>
+              <td>발행 지연</td>
+              <td>5초 폴링 주기</td>
+              <td>지연 민감도가 높아지면 주기 단축 또는 CDC 검토</td>
+            </tr>
+            <tr>
+              <td>중복 방어 범위</td>
+              <td>알림 도메인만 UNIQUE 제약으로 방어</td>
+              <td>타 도메인 확장 시 이벤트 ID 기반 범용 중복 제거</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
+
+    <details>
+      <summary>이벤트 토픽 명세 <em>9건</em></summary>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th>토픽</th><th>이벤트</th><th>Producer</th><th>Consumer</th><th
+                >역할</th
+              >
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              ><td>post-events</td><td>POST_CREATED</td><td>Feed</td><td
+                >Embedding</td
+              ><td>게시글 벡터 임베딩</td></tr
+            >
+            <tr
+              ><td>post-events</td><td>POST_LIKED</td><td>Feed</td><td
+                >Notification</td
+              ><td>좋아요 알림 생성</td></tr
+            >
+            <tr
+              ><td>post-events</td><td>POST_COMMENTED</td><td>Feed</td><td
+                >Notification</td
+              ><td>댓글 알림 생성</td></tr
+            >
+            <tr
+              ><td>post-events</td><td>POST_DELETED</td><td>Feed</td><td
+                >Embedding</td
+              ><td>검색 숨김</td></tr
+            >
+            <tr
+              ><td>post-events</td><td>POST_HARD_DELETED</td><td>Feed</td><td
+                >Embedding</td
+              ><td>벡터 영구 삭제</td></tr
+            >
+            <tr
+              ><td>post-events</td><td>POST_RESTORED</td><td>Feed</td><td
+                >Embedding</td
+              ><td>검색 정합 복원</td></tr
+            >
+            <tr
+              ><td>chat-message-created</td><td>—</td><td>Chat</td><td
+                >Notification</td
+              ><td>채팅 알림 생성</td></tr
+            >
+            <tr
+              ><td>post-events DLT</td><td>—</td><td>Notification</td><td
+                >수동</td
+              ><td>소비 실패 격리</td></tr
+            >
+            <tr
+              ><td>chat-message-created DLT</td><td>—</td><td>Notification</td
+              ><td>수동</td><td>소비 실패 격리</td></tr
+            >
+          </tbody>
+        </table>
+      </div>
+      <p>
+        파티션 키는 게시글 이벤트가 작성자 ID, 채팅 이벤트가 방 ID입니다. 방별
+        메시지 순서를 보존하기 위해서입니다.
+      </p>
+    </details>
+
+    <details>
+      <summary>Soft Delete 라이프사이클</summary>
+      <p>
+        게시글 삭제는 플래그 하나로 끝나지 않았습니다. 삭제하면 댓글·좋아요를 함께
+        숨겨야 하고, 복구할 때
+        <strong>사용자가 직접 지운 댓글까지 되살아나면 안 되며</strong>, 30일 뒤
+        영구 삭제 시 S3 미디어와 검색 벡터까지 정리돼야 합니다.
+      </p>
+      <ul>
+        <li>
+          게시글 삭제로 함께 숨겨진 경우에만 표시를 남겨, 복구 시 그 항목만
+          되살립니다. 게시글 복구가 개인의 삭제 의사를 덮어쓰지 않게 했습니다.
+        </li>
+        <li>
+          매일 새벽 배치가 보관 기간이 지난 게시글을 처리합니다. S3 미디어 삭제를
+          먼저 하고, DB 물리 삭제와 다운스트림 통지 이벤트 기록을 같은 트랜잭션으로
+          묶어 통지가 유실되지 않게 했습니다.
+        </li>
+        <li>
+          검색 숨김과 벡터 영구 삭제는 다운스트림 동작이 다르므로 하나의 이벤트에
+          구분 필드를 두는 대신 별도 이벤트 타입으로 분리해, 컨슈머의 분기 부담을
+          없앴습니다.
+        </li>
+      </ul>
+    </details>
+
+    <div class="pager">
+      <a href="/">포트폴리오</a>
+      <a href="/projects/logistics">스파르타 물류 플랫폼</a>
+    </div>
+  </div>
+</Base>
